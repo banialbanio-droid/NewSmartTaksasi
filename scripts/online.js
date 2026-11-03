@@ -19,10 +19,24 @@ const { spawn, exec, execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const https = require('https');
 
 const ROOT = path.resolve(__dirname, '..');
 const CF = path.join(ROOT, 'cloudflared.exe');
 const URL_FILE = path.join(ROOT, 'tunnel-url.txt');
+
+/**
+ * Papan pengumuman alamat server.
+ *
+ * Aplikasi membaca topik ini untuk menemukan backend tanpa pengguna
+ * mengetik alamat apa pun. Harus sama dengan DiscoveryService.topic di app.
+ * Anggap nama topik ini kunci rahasia bersama.
+ */
+const DISCOVERY_TOPIC = 'taksasi-srv-8k2m9x4q7v1n6p3w';
+const DISCOVERY_URL = `https://ntfy.sh/${DISCOVERY_TOPIC}`;
+
+/** Pesan di ntfy kedaluwarsa 12 jam; segarkan tiap 4 jam. */
+const HEARTBEAT_MS = 4 * 60 * 60 * 1000;
 const LOG_FILE = path.join(ROOT, 'tunnel.log');
 
 const args = process.argv.slice(2);
@@ -76,6 +90,46 @@ async function waitForBackend(tries = 20) {
     await new Promise((r) => setTimeout(r, 1000));
   }
   return false;
+}
+
+/**
+ * Umumkan alamat server ke papan pengumuman.
+ *
+ * Dipanggil setiap tunnel dapat URL baru, lalu diulang berkala supaya
+ * pengumuman tidak kedaluwarsa selama backend menyala.
+ */
+function publishUrl(url) {
+  return new Promise((resolve) => {
+    let body;
+    try {
+      body = Buffer.from(url, 'utf8');
+    } catch (_) {
+      return resolve(false);
+    }
+
+    const req = https.request(
+      DISCOVERY_URL,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain',
+          'Content-Length': body.length,
+        },
+        timeout: 12000,
+      },
+      (res) => {
+        res.resume();
+        resolve(res.statusCode >= 200 && res.statusCode < 300);
+      }
+    );
+
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
+    req.end(body);
+  });
 }
 
 /** Matikan proses yang memakai port 3000 (Windows). */
@@ -171,6 +225,22 @@ function startTunnel() {
       warn('URL berubah kalau jendela ini ditutup. Biarkan tetap terbuka.');
       say(`${C.dim}Tekan Ctrl+C untuk berhenti.${C.reset}`);
       say('');
+
+      // Umumkan ke papan pengumuman supaya app bisa menemukannya sendiri.
+      publishUrl(url).then((sent) => {
+        if (sent) {
+          say(`${C.dim}  Alamat diumumkan — app akan menemukannya otomatis.${C.reset}`);
+        } else {
+          warn('Gagal mengumumkan alamat. App perlu alamat dimasukkan manual.');
+        }
+      });
+
+      // Segarkan berkala supaya pengumuman tidak kedaluwarsa (12 jam).
+      setInterval(() => {
+        publishUrl(url).then((sent) => {
+          if (sent) say(`${C.dim}  Pengumuman alamat disegarkan.${C.reset}`);
+        });
+      }, HEARTBEAT_MS);
 
       resolve(url);
     };

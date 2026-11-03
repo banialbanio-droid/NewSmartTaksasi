@@ -1,5 +1,11 @@
 # Cara Membuat Aplikasi Bisa Diakses dari Jaringan Mana Saja
 
+> **Paling gampang: tidak perlu mengisi apa pun.**
+> Aplikasi sekarang mencari server sendiri. Saat backend menyala, ia
+> mengumumkan alamatnya ke papan pengumuman publik (ntfy.sh), dan app
+> membacanya. Jadi walau URL tunnel berubah setiap restart, app tetap
+> menemukannya — pengguna hanya perlu login.
+
 Backend berjalan di PC ini. Supaya HP bisa menghubunginya **tanpa harus satu
 WiFi**, backend harus punya alamat yang bisa dijangkau dari internet.
 
@@ -44,7 +50,7 @@ membuka akses ke internet publik (HTTPS).
 
 ---
 
-## Pilihan 2 — Tunnel Cloudflare (jalan sekarang, URL berubah)
+## Pilihan 2 — Tunnel Cloudflare (otomatis, tanpa isi alamat)
 
 ```bash
 cd C:/Users/USER/smart-taksasi-backend
@@ -59,9 +65,14 @@ Script akan mencetak URL seperti:
 https://pricing-hiv-dramatic-yacht.trycloudflare.com
 ```
 
-**Kelebihan:** tidak perlu akun apa pun, langsung jalan.
-**Kekurangan:** URL **berubah setiap backend di-restart**, jadi harus
-ditempel ulang di app setiap kali. PC harus menyala.
+URL itu **juga diumumkan otomatis** ke papan pengumuman, jadi app akan
+menemukannya sendiri walaupun URL berubah setiap restart. Pengguna tidak
+perlu mengetik apa pun.
+
+**Kelebihan:** tidak perlu akun apa pun, langsung jalan, alamat dicari
+otomatis.
+**Kekurangan:** butuh ~20-30 detik saat backend baru dinyalakan sebelum
+tunnel siap; PC harus menyala.
 
 ---
 

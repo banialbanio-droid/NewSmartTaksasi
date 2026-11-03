@@ -42,8 +42,28 @@ const phoneNorm = (v) => {
 };
 
 /** Excel serial date (1900) atau string tanggal -> "YYYY-MM-DD". */
+/**
+ * Placeholder yang sering dipakai di file Excel dan bukan tanggal nyata.
+ * Contoh nyata: kolom Janji Bayar berisi teks "MASUKAN FORMAT TANGGAL".
+ */
+const DATE_PLACEHOLDERS = [
+  'masukan format tanggal',
+  'masukkan format tanggal',
+  'format tanggal',
+  'isi tanggal',
+  'tanggal',
+  '-',
+  'null',
+];
+
+const isDatePlaceholder = (v) => {
+  const s = norm(v).toLowerCase();
+  return DATE_PLACEHOLDERS.includes(s);
+};
+
 const toDate = (v) => {
   if (v == null || v === '') return '';
+  if (isDatePlaceholder(v)) return '';
   if (v instanceof Date) return v.toISOString().slice(0, 10);
   const n = typeof v === 'number' ? v : parseFloat(String(v).replace(/[^0-9.]/g, ''));
   if (Number.isFinite(n) && n > 20000 && n < 60000) {
@@ -327,7 +347,9 @@ function transform(type, raw, map) {
         norm(get('alamat')), num(get('plafon')),
         Math.round(num(get('overdue'))),
         status || 'BELUM BAYAR',
-        norm(get('reason')), toDate(get('janji_bayar')) || norm(get('janji_bayar')),
+        norm(get('reason')),
+        // Janji bayar hanya disimpan kalau benar-benar tanggal.
+        toDate(get('janji_bayar')),
       ],
     };
   }

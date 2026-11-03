@@ -21,7 +21,8 @@ const mapRow = (r) => ({
   overdue: r.overdue,
   statusBq: r.status_bq,
   reason: r.reason,
-  janjiBayar: r.janji_bayar
+  janjiBayar: r.janji_bayar,
+  lastUpdated: r.updated_at
 });
 
 /**

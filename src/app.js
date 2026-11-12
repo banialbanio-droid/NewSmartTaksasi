@@ -13,7 +13,10 @@ const bqRoutes = require('./routes/bookingQuality');
 const roRoutes = require('./routes/repeatOrder');
 const taksasiRoutes = require('./routes/taksasi');
 const userRoutes = require('./routes/users');
+const targetRoutes = require('./routes/targets');
+const pricelistRoutes = require('./routes/pricelist');
 const legacyRoutes = require('./routes/legacy/komite');
+const { requireAuth } = require('./middleware/auth');
 const { initDb } = require('./db/database');
 
 const app = express();
@@ -70,7 +73,11 @@ app.use('/api/v1/repeat-order', roRoutes);
 app.use('/api/v1/taksasi', taksasiRoutes);
 app.use('/api/v1/master', masterRoutes);
 app.use('/api/v1/users', userRoutes);
-app.use('/api', legacyRoutes);
+app.use('/api/v1/targets', targetRoutes);
+app.use('/api/v1/pricelist', pricelistRoutes);
+// Route legacy SPA lama (/api/*) membaca followup & komite, termasuk menulis
+// status. Wajib token: backend akan dipindah ke VPS publik, bukan LAN rumah.
+app.use('/api/', requireAuth, legacyRoutes);
 
 // 404 handler
 app.use((req, res) => {

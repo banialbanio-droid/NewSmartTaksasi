@@ -45,6 +45,15 @@ async function login(req, res) {
       return res.status(401).json({ success: false, code: 'INVALID', message: 'CS ID atau PIN salah. Periksa kembali CS ID Anda.' });
     }
 
+    // Jeda progresif tiap kegagalan berturut-turut supaya percobaan cepat
+    // (misal lewat banyak akun sekaligus) tidak praktis. Akun dikunci total
+    // di percobaan ke-3, jadi jeda ini hanya menahan percobaan 1 dan 2.
+    const priorAttempts = user.failed_attempts || 0;
+    if (priorAttempts > 0) {
+      const delayMs = priorAttempts * 1500;
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+
     const blocked = statusBlockMessage(user);
     if (blocked) {
       return res.status(403).json(blocked);

@@ -52,6 +52,14 @@ membuka akses ke internet publik (HTTPS).
 
 ## Pilihan 2 — Tunnel Cloudflare (otomatis, tanpa isi alamat)
 
+> **Catatan penting (batas 429).** Cloudflare membatasi pembuatan quick
+> tunnel tanpa akun per alamat IP. Kalau muncul
+> `quick tunnel provisioning failed with status 429`, itu batas dari
+> Cloudflare, bukan bug. Skrip sekarang otomatis beralih ke tunnel cadangan
+> (Pinggy, lalu localtunnel) supaya tim tetap bisa kerja. Untuk alamat
+> permanen tanpa batas, pakai **named tunnel** — lihat
+> [CLOUDFLARE-TUNNEL.md](CLOUDFLARE-TUNNEL.md).
+
 ```bash
 cd C:/Users/USER/smart-taksasi-backend
 node scripts/online.js

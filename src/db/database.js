@@ -282,6 +282,71 @@ function initDb() {
         else console.log('Taksasi History table ready');
       });
 
+      // ----------------------------------------------------------------
+      // Target marketing: dibuat supervisor, dibaca semua marketing.
+      //
+      // Kenapa tabel terpisah, bukan kolom di users: target berubah tiap
+      // bulan dan supervisor perlu riwayat periode lama tetap tersimpan
+      // (dipakai grafik tren). Satu baris = satu CS ID untuk satu periode.
+      //
+      // periode memakai format YYYY-MM supaya pengurutan & filter mudah.
+      // ----------------------------------------------------------------
+      database.run(`
+        CREATE TABLE IF NOT EXISTS marketing_targets (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          cs_id TEXT NOT NULL,
+          periode TEXT NOT NULL,
+          target_bq INTEGER DEFAULT 0,
+          target_gform INTEGER DEFAULT 0,
+          target_ro INTEGER DEFAULT 0,
+          target_taksasi INTEGER DEFAULT 0,
+          target_booking INTEGER DEFAULT 0,
+          catatan TEXT,
+          created_by TEXT,
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now')),
+          UNIQUE (cs_id, periode)
+        )
+      `, (err) => {
+        if (err) console.error('Error creating marketing_targets table:', err.message);
+        else console.log('Marketing Targets table ready');
+
+        // Migrasi kolom target_booking untuk database yang sudah ada
+        // sebelum fitur ini ditambahkan.
+        database.run(
+          'ALTER TABLE marketing_targets ADD COLUMN target_booking INTEGER DEFAULT 0',
+          (mErr) => {
+            if (mErr && !/duplicate column name/i.test(mErr.message)) {
+              console.error('target_booking column error:', mErr.message);
+            } else if (!mErr) {
+              console.log('target_booking column migrated');
+            }
+          }
+        );
+      });
+
+      // ----------------------------------------------------------------
+      // Price list angsuran (Reguler & Awda).
+      //
+      // Satu baris = satu nominal dana cair dengan angsuran per tenor.
+      // Disimpan sebagai JSON di kolom angsuran karena tenor tiap skema
+      // berbeda (Reguler 6/8/12/18/24/36, Awda 6/8/12/16/24/36) — kolom
+      // terpisah per tenor akan menyisakan kolom kosong.
+      // ----------------------------------------------------------------
+      database.run(`
+        CREATE TABLE IF NOT EXISTS pricelist_angsuran (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          skema TEXT NOT NULL,
+          dana_cair INTEGER NOT NULL,
+          angsuran TEXT NOT NULL,
+          created_at TEXT DEFAULT (datetime('now')),
+          UNIQUE (skema, dana_cair)
+        )
+      `, (err) => {
+        if (err) console.error('Error creating pricelist_angsuran table:', err.message);
+        else console.log('Price List Angsuran table ready');
+      });
+
       // Indexes for search performance
       const indexes = [
         'CREATE INDEX IF NOT EXISTS idx_otr_brand ON otr_prices(brand)',

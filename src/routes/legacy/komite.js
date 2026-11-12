@@ -7,24 +7,13 @@ const { getDb } = require('../../db/database');
 router.get('/config', (req, res) => {
   try {
     const have = req.query.have || '';
-    const db = getDb();
-
-    // Konstanta (mendapatkan dari taksasiCalculator)
-    db.get('SELECT * FROM config', [], (err, cfg) => {
-      if (err) {
-        console.error('Config fetch error:', err.message);
-        return res.status(500).json({ success: false, message: 'Gagal memuat konfigurasi.' });
-      }
-
-      // Cari di kolom CSV
-      let result = {};
-      if (cfg && cfg.config_json) {
-        result = JSON.parse(cfg.config_json);
-      }
-      result.have = have;
-      result.config = true;
-
-      res.json({ success: true, data: result });
+    // Dulu membaca tabel config yang tidak pernah dibuat di database.js,
+    // jadi endpoint selalu 500. Sumber kebenaran konstanta ada di
+    // taksasiCalculator — pakai itu, tanpa query DB.
+    const { KONSTANTA } = require('../../services/taksasiCalculator');
+    res.json({
+      success: true,
+      data: { ...KONSTANTA, have, config: true }
     });
   } catch (err) {
     console.error('Config error:', err.message);

@@ -1,4 +1,5 @@
 const { verifyToken } = require('../utils/auth');
+const { getDb } = require('../db/database');
 
 // Require valid JWT token
 function requireAuth(req, res, next) {
@@ -31,7 +32,34 @@ function requireAuth(req, res, next) {
   }
 
   req.user = decoded;
-  next();
+
+  // Status akun bisa berubah setelah token diterbitkan (dinonaktifkan,
+  // dikunci, atau PIN direset oleh Unit Head). Token berlaku 6 jam, jadi
+  // status disegarkan dari DB tiap request — jangan percaya salinan di token.
+  getDb().get('SELECT status, role FROM users WHERE cs_id = ?', [decoded.csId], (err, row) => {
+    if (err) {
+      console.error('Auth status check error:', err.message);
+      return res.status(500).json({ success: false, message: 'Gagal memverifikasi sesi.' });
+    }
+    if (!row) {
+      return res.status(401).json({
+        success: false,
+        code: 'AUTH_REQUIRED',
+        message: 'Akun tidak ditemukan lagi. Silakan login kembali.'
+      });
+    }
+    if (row.status !== 'AKTIF') {
+      return res.status(403).json({
+        success: false,
+        code: row.status === 'TERKUNCI' ? 'LOCKED' : 'DISABLED',
+        message: 'Akun tidak aktif. Hubungi Unit Head.'
+      });
+    }
+
+    // Role terbaru menang atas role di token.
+    req.user.role = row.role;
+    next();
+  });
 }
 
 // Require supervisor role

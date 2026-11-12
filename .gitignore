@@ -1,0 +1,16 @@
+node_modules/
+.env
+.env.local
+.env.bak
+.env.*
+*.log
+src/db/*.db
+src/db/*.db-journal
+src/db/*.db-wal
+src/db/*.db-shm
+backups/
+data/
+!data/.gitkeep
+*.exe
+__pycache__/
+*.pyc

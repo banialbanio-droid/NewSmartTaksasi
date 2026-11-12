@@ -3,6 +3,41 @@ const { ownershipClause, canSeeRow } = require('../utils/dataOwnership');
 
 const isSupervisor = (user) => String(user && user.role).toUpperCase() === 'SUPERVISOR';
 
+/**
+ * Hari telat dihitung ULANG dari tanggal jatuh tempo sampai hari ini.
+ *
+ * Kolom `overdue` di database berasal dari file Excel dan sering basi
+ * atau bahkan negatif (mis. -23) karena diisi saat file dibuat. Untuk
+ * penagihan, angka yang benar adalah selisih hari nyata. Nilai kolom
+ * hanya dipakai sebagai cadangan kalau jatuh_tempo kosong/tidak valid.
+ *
+ * Mengembalikan 0 kalau belum jatuh tempo.
+ */
+const hitungHariTelat = (jatuhTempo, overdueDb) => {
+  const raw = jatuhTempo == null ? '' : String(jatuhTempo).trim();
+  if (raw) {
+    // Terima YYYY-MM-DD maupun DD/MM/YYYY atau DD-MM-YYYY.
+    let y, m, d;
+    let mt = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (mt) {
+      y = +mt[1]; m = +mt[2]; d = +mt[3];
+    } else {
+      mt = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+      if (mt) { d = +mt[1]; m = +mt[2]; y = +mt[3]; }
+    }
+    if (y && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      const jt = Date.UTC(y, m - 1, d);
+      const now = new Date();
+      const hariIni = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+      const selisih = Math.round((hariIni - jt) / 86400000);
+      return selisih > 0 ? selisih : 0;
+    }
+  }
+  // Cadangan: pakai kolom DB kalau ada, tapi jangan pernah negatif.
+  const v = Number(overdueDb);
+  return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+};
+
 const mapRow = (r) => ({
   id: r.id,
   contractNo: r.contract_no,
@@ -18,7 +53,8 @@ const mapRow = (r) => ({
   alamat: r.alamat,
   plafon: r.plafon,
   unitMotor: r.unit_motor,
-  overdue: r.overdue,
+  // Dihitung ulang, bukan disalin dari kolom Excel yang sering basi.
+  overdue: hitungHariTelat(r.jatuh_tempo, r.overdue),
   statusBq: r.status_bq,
   reason: r.reason,
   janjiBayar: r.janji_bayar,
@@ -45,8 +81,20 @@ exports.listBQ = (req, res) => {
   where += own.sql;
   params.push(...own.params);
   if (status) {
-    where += ' AND UPPER(status_bq) = ?';
-    params.push(String(status).trim().toUpperCase());
+    // Status di DB memakai spasi ("BELUM BAYAR"), sedangkan app lama
+    // mengirim underscore ("BELUM_BAYAR"). Normalisasi keduanya supaya
+    // filter tidak pernah mengembalikan daftar kosong.
+    const normalized = String(status).trim().toUpperCase().replace(/_/g, ' ');
+
+    if (normalized === 'JANJI BAYAR') {
+      // Janji bayar bukan status tersendiri: sebuah kontrak tetap
+      // "BELUM BAYAR" tapi punya tanggal janji. Filter ini menangkap
+      // keduanya supaya marketing bisa menagih sesuai janji.
+      where += " AND (UPPER(status_bq) = 'JANJI BAYAR' OR janji_bayar IS NOT NULL)";
+    } else {
+      where += ' AND UPPER(status_bq) = ?';
+      params.push(normalized);
+    }
   }
   if (search) {
     where += ' AND (contract_no LIKE ? OR UPPER(customer_name) LIKE ?)';
@@ -63,7 +111,12 @@ exports.listBQ = (req, res) => {
     }
 
     db.all(
-      `SELECT * FROM booking_quality${where} ORDER BY overdue DESC, jatuh_tempo ASC LIMIT ? OFFSET ?`,
+      // Urutkan menurut hari telat yang dihitung nyata, bukan kolom
+      // overdue dari Excel yang sering basi/negatif.
+      `SELECT * FROM booking_quality${where}
+       ORDER BY (julianday('now','localtime') - julianday(jatuh_tempo)) DESC,
+                jatuh_tempo ASC
+       LIMIT ? OFFSET ?`,
       [...params, lim, off],
       (err2, rows) => {
         if (err2) {
@@ -208,7 +261,10 @@ exports.getBQStats = (req, res) => {
   const db = getDb();
 
   db.all(
-    `SELECT status_bq, COUNT(*) AS jumlah, SUM(install_amt) AS total_amt, SUM(overdue) AS total_dpd
+    `SELECT status_bq, COUNT(*) AS jumlah, SUM(install_amt) AS total_amt,
+            SUM(CASE WHEN jatuh_tempo IS NOT NULL AND jatuh_tempo <> ''
+                     THEN MAX(0, CAST(julianday('now','localtime') - julianday(jatuh_tempo) AS INTEGER))
+                     ELSE 0 END) AS total_dpd
      FROM booking_quality${where}
      GROUP BY status_bq ORDER BY jumlah DESC`,
     params,
@@ -219,7 +275,11 @@ exports.getBQStats = (req, res) => {
       }
 
       db.get(
-        `SELECT COUNT(*) AS total, SUM(overdue) AS total_dpd, SUM(install_amt) AS total_amt
+        `SELECT COUNT(*) AS total,
+                SUM(install_amt) AS total_amt,
+                SUM(CASE WHEN jatuh_tempo IS NOT NULL AND jatuh_tempo <> ''
+                         THEN MAX(0, CAST(julianday('now','localtime') - julianday(jatuh_tempo) AS INTEGER))
+                         ELSE 0 END) AS total_dpd
          FROM booking_quality${where}`,
         params,
         (err2, sumRow) => {
@@ -227,22 +287,135 @@ exports.getBQStats = (req, res) => {
             return res.status(500).json({ success: false, code: 'DB_ERROR', message: 'Gagal membaca ringkasan.' });
           }
 
-          res.json({
-            success: true,
-            data: {
-              totalKontrak: sumRow ? sumRow.total : 0,
-              totalTunggakan: sumRow ? sumRow.total_amt || 0 : 0,
-              totalDpd: sumRow ? sumRow.total_dpd || 0 : 0,
-              breakdown: (rows || []).map((r) => ({
-                status: r.status_bq || '(kosong)',
-                jumlah: r.jumlah,
-                totalAmt: r.total_amt || 0,
-                totalDpd: r.total_dpd || 0
-              }))
+          // Janji bayar: kontrak yang punya tanggal janji ATAU berstatus
+          // "JANJI BAYAR". Dihitung terpisah karena kontrak yang berjanji
+          // biasanya tetap berstatus "BELUM BAYAR" di database.
+          db.get(
+            `SELECT COUNT(*) AS janji FROM booking_quality${where}
+             AND (janji_bayar IS NOT NULL AND TRIM(janji_bayar) <> ''
+                  OR UPPER(status_bq) = 'JANJI BAYAR')`,
+            params,
+            (err3, janjiRow) => {
+              if (err3) {
+                console.error('BQ janji stats error:', err3.message);
+              }
+
+              // Kontrak yang sudah jatuh tempo dan belum dibayar — dipakai
+              // untuk notifikasi pengingat dan kartu dashboard.
+              db.get(
+                `SELECT COUNT(*) AS jatuh_tempo FROM booking_quality${where}
+                 AND UPPER(status_bq) <> 'BAYAR'
+                 AND UPPER(status_bq) <> 'SUDAH BAYAR'
+                 AND UPPER(status_bq) <> 'LUNAS'
+                 AND jatuh_tempo IS NOT NULL AND jatuh_tempo <> ''
+                 AND date(jatuh_tempo) <= date('now','localtime')`,
+                params,
+                (err4, tempoRow) => {
+                  if (err4) {
+                    console.error('BQ jatuh tempo stats error:', err4.message);
+                  }
+
+                  const total = sumRow ? sumRow.total || 0 : 0;
+                  const janji = janjiRow ? janjiRow.janji || 0 : 0;
+                  const jatuhTempo = tempoRow ? tempoRow.jatuh_tempo || 0 : 0;
+
+                  res.json({
+                    success: true,
+                    data: {
+                      totalKontrak: total,
+                      totalTunggakan: sumRow ? sumRow.total_amt || 0 : 0,
+                      // Tidak pernah negatif lagi (dulu -2953 karena
+                      // menjumlah kolom overdue dari Excel).
+                      totalDpd: sumRow ? Math.round(sumRow.total_dpd || 0) : 0,
+                      janjiBayar: janji,
+                      // Persentase dipakai kartu analitik: berapa bagian
+                      // dari seluruh kontrak yang masih janji bayar.
+                      janjiBayarPersen: total > 0 ? (janji / total) * 100 : 0,
+                      jatuhTempo: jatuhTempo,
+                      breakdown: (rows || []).map((r) => ({
+                        status: r.status_bq || '(kosong)',
+                        jumlah: r.jumlah,
+                        totalAmt: r.total_amt || 0,
+                        totalDpd: Math.round(r.total_dpd || 0)
+                      }))
+                    }
+                  });
+                }
+              );
             }
-          });
+          );
         }
       );
+    }
+  );
+};
+
+/**
+ * Daftar kontrak jatuh tempo milik user yang sedang login.
+ *
+ * Dipakai app untuk membangun notifikasi lokal di HP masing-masing:
+ * setiap marketing hanya menerima pengingat untuk nasabahnya sendiri,
+ * supervisor menerima semua.
+ *
+ * GET /api/v1/booking-quality/jatuh-tempo?limit=20
+ */
+exports.getJatuhTempo = (req, res) => {
+  const user = req.user;
+  const lim = Math.min(parseInt(req.query.limit, 10) || 20, 100);
+
+  let where = ' WHERE 1=1';
+  const params = [];
+
+  const own = ownershipClause(user);
+  where += own.sql;
+  params.push(...own.params);
+
+  // Belum lunas dan sudah lewat tanggal jatuh tempo.
+  where += ` AND UPPER(COALESCE(status_bq,'')) NOT IN ('BAYAR','SUDAH BAYAR','LUNAS')
+             AND jatuh_tempo IS NOT NULL AND TRIM(jatuh_tempo) <> ''
+             AND date(jatuh_tempo) <= date('now','localtime')`;
+
+  const db = getDb();
+
+  db.all(
+    `SELECT contract_no, customer_name, phone, jatuh_tempo, install_amt,
+            angs_ke, status_bq, janji_bayar,
+            CAST(julianday('now','localtime') - julianday(jatuh_tempo) AS INTEGER) AS telat
+       FROM booking_quality${where}
+      ORDER BY telat DESC
+      LIMIT ?`,
+    [...params, lim],
+    (err, rows) => {
+      if (err) {
+        console.error('Jatuh tempo list error:', err.message);
+        return res.status(500).json({
+          success: false,
+          code: 'DB_ERROR',
+          message: 'Gagal membaca daftar jatuh tempo.',
+        });
+      }
+
+      const data = (rows || []).map((r) => ({
+        contractNo: r.contract_no,
+        customerName: r.customer_name,
+        phone: r.phone,
+        jatuhTempo: r.jatuh_tempo,
+        installAmt: r.install_amt || 0,
+        angsKe: r.angs_ke,
+        statusBq: r.status_bq,
+        janjiBayar: r.janji_bayar,
+        hariTelat: r.telat > 0 ? r.telat : 0,
+      }));
+
+      res.json({
+        success: true,
+        data: {
+          jumlah: data.length,
+          totalTunggakan: data.reduce((s, d) => s + (d.installAmt || 0), 0),
+          telatTerlama: data.length ? data[0].hariTelat : 0,
+          items: data,
+        },
+      });
     }
   );
 };

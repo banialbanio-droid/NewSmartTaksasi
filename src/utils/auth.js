@@ -2,9 +2,19 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-change-me';
+const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '6h';
 const MAX_LOGIN_ATTEMPTS = parseInt(process.env.MAX_LOGIN_ATTEMPTS) || 3;
+
+// Tanpa fallback: kalau JWT_SECRET kosong, server menolak jalan. Fallback
+// secret tetap berarti siapa pun yang tahu kodenya bisa menerbitkan token
+// sendiri (termasuk role SUPERVISOR) dan melewati seluruh login.
+if (!JWT_SECRET || JWT_SECRET.length < 32) {
+  throw new Error(
+    'JWT_SECRET belum diset atau terlalu pendek (min 32 karakter). ' +
+    'Isi JWT_SECRET di .env sebelum menjalankan server.'
+  );
+}
 
 // Hash PIN
 async function hashPin(pin) {
